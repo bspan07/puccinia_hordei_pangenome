@@ -1,0 +1,561 @@
+---
+title: Gene annotation pipeline |  `r format(Sys.time(), '%m.%d.%Y')`
+author: "Rebecca Spanner"
+output:
+    rmdformats::readthedown:
+    code_folding: hide
+    self_contained: true
+    number_sections: False
+    highlight: pygments
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+<style type="text/css">
+  
+  body{ /* Normal  */
+      font-size: 14px;
+  }
+td {  /* Table  */
+    font-size: 8px;
+}
+h1 { /* Header 1 */
+    font-size: 28px;
+  color: DarkBlue;
+}
+h2 { /* Header 2 */
+    font-size: 20px;
+  color: DarkBlue;
+}
+h3 { /* Header 3 */
+    font-size: 16px;
+  color: DarkBlue;
+}
+code.r{ /* Code block */
+    font-size: 12px;
+}
+pre { /* Code block */
+    font-size: 12px
+}
+</style>
+  
+#1. Trimming of raw Illumina RNAseq reads (if available)
+
+```{Trimming RNAseq reads, eval=FALSE}
+#load trimmomatic module/conda environment/add path to trimmomatic java file
+#module load trimmomatic#!/bin/bash -l
+#SBATCH --job-name=trim-seqs
+#SBATCH --nodes=1
+#SBATCH --ntasks=32
+#SBATCH --mem=40GB
+#SBATCH --time=48:00:00
+#SBATCH --mail-user=spann057@umn.edu
+#SBATCH --mail-type=END
+
+#if have diploid assemblies in folder --- there are 10 Puccinia hordei isolates
+ls *diploidassembly.fasta | sed 's/_diploidassembly.fasta//' > isolates.txt
+
+#to submit: sbatch -a 0-9 --export INPUTLIST="isolates.txt" trim-seqs.sh
+module load java/openjdk-17.0.2
+
+#change folders to where paired-end RNAseq raw reads lie
+#cd /path/to/illumina/reads/ 
+
+#put path to trimmomatic
+if [ -s "$INPUTLIST" ]
+then
+    SAMPLES=( $(cut -f 1 $INPUTLIST) );
+
+    if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
+    then
+        i=$SLURM_ARRAY_TASK_ID
+       java -jar /scratch.global/spann057/wheat_stem_rust/trimmomatic/classes/trimmomatic.jar PE -phred33 ${SAMPLES[i]}_1.fastq.gz ${SAMPLES[i]}_2.fastq.gz ${SAMPLES[i]}_forward_paired.fastq.gz ${SAMPLES[i]}_forward_unpaired.fastq.gz ${SAMPLES[i]}_reverse_paired.fastq.gz ${SAMPLES[i]}_reverse_unpaired.fastq.gz ILLUMINACLIP:TruSeq3-PE.fa:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36
+    else
+        echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
+    fi
+else
+    echo "Error: Missing inputs file list as --export env INPUTLIST or file empty"
+fi
+```  
+  
+#2. Soft masking of repeat sequences 
+  
+```{bash repeat masking, eval=FALSE}
+#get RepeatModeler libraries if do not have already
+#!/usr/bin/env bash
+#SBATCH --time=48:00:00
+#SBATCH --job-name=repeat-annotation
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=32
+#SBATCH --mem=40G
+#SBATCH --mail-user=spann057@umn.edu
+#SBATCH --mail-type=END
+ls *fasta > files.txt
+#includes diploid, haploid, unplaced
+
+#to submit: sbatch -a 0-39 --export INPUTLIST="files.txt" repeatmasker.sh
+module load repeatmodeler
+module load repeatmasker/4.1.1
+
+if [ -s "$INPUTLIST" ]
+then
+    SAMPLES=( $(cut -f 1 $INPUTLIST) );
+
+    if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
+    then
+        i=$SLURM_ARRAY_TASK_ID
+        module load repeatmodeler/4.1.1
+        module load repeatmasker
+        BuildDatabase -name ${SAMPLES[i]}_db ${SAMPLES[i]}
+        RepeatModeler -database ${SAMPLES[i]}_db -LTRStruct
+        #RepeatMasker -s -nolow -small -lib ${SAMPLES[i]}_db-families.fa -dir ${SAMPLES[i]}_repeatmasker_softmasked ${SAMPLES[i]}
+        #mv ${SAMPLES[i]}_repeatmasker_softmasked/${SAMPLES[i]}.masked ${SAMPLES[i]}_masked.fasta
+        #rename ".fasta_masked" "_masked" *
+        module load funannotate
+        funannotate mask -i ${SAMPLES[i]} -o ${SAMPLES[i]}_softmasked.fasta -l ${SAMPLES[i]}_db-families.fa
+        module load bbmap
+        dedupe.sh in=${SAMPLES[i]}_softmasked.fasta out=${SAMPLES[i]}_softmasked_deduped.fasta
+    else
+        echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
+    fi
+else
+    echo "Error: Missing inputs file list as --export env INPUTLIST or file empty"
+fi
+```
+
+#3. Align raw reads to diploid, haploid and unplaced chromosomes
+
+```{bash hisat2, eval=FALSE}
+#load hisat2 aligner to align illumina paired end reads to assemblies
+##make sure in same folder as the masked assemblies *masked.fasta
+
+#make list of reference genomes to align to
+ls *softmasked_deduped.fasta > refs.txt
+
+#make list of read identifiers
+ls *paired.fastq.gz | sed 's/_R1_paired.fastq.gz//' | sed 's/_R2_paired.fastq.gz//' | sort -u > reads.txt
+
+
+#!/bin/bash -l
+#SBATCH --job-name=align-rnaseq-ph
+#SBATCH --nodes=1
+#SBATCH --mem=40G
+#SBATCH --ntasks-per-node=16
+#SBATCH --time=48:00:00
+#SBATCH --mail-type=FAIL
+
+#sbatch -a 0-3 --export INPUTLIST="refs.txt" align-rnaseq-ph.sh
+
+module load conda
+if [ -s "$INPUTLIST" ]
+then
+    SAMPLES=( $(cut -f 1 $INPUTLIST) );
+
+    if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
+    then
+        i=$SLURM_ARRAY_TASK_ID
+
+        LIST=($(cut -f 1 reads.txt))
+        ##
+        module load hisat2
+        hisat2-build ${SAMPLES[i]} ${SAMPLES[i]}_genome
+        for f in ${LIST[@]};do hisat2 --max-intronlen 3000 --dta --no-unal -x ${SAMPLES[i]}_genome -1 ${f}_R1_paired.fastq.gz -2 ${f}_R2_paired.fastq.gz -S ${SAMPLES[i]}_${f}.sam;done
+        module load samtools
+        #samtools sort
+        for f in ${LIST[@]};do samtools view -b ${SAMPLES[i]}_${f}.sam | samtools sort - -o ${SAMPLES[i]}_${f}_sorted_masked.bam;done
+        #use stringtie and merge these........per sample
+        #merge replicates
+        #module load stringtie
+        #stringtie --merge -o ${SAMPLES[i]}.gtf -m50 -M1 ${SAMPLES[i]}_1_sorted.bam ${SAMPLES[i]}_2_sorted.bam ${SAMPLES[i]}_3_sorted.bam
+    else
+        echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
+    fi
+else
+    echo "Error: Missing inputs file list as --export env INPUTLIST or file empty"
+fi
+
+```
+
+#4. Merge sorted alignment files and use stringtie to compile alignments into a single non-redundant transcript annotation file
+```{merge sorted bam files - samtools merge}
+#merge all for diploid, haploid, and unplaced
+##then merge separately for spores and infection transcripts - diploid, haploid, and unplaced
+#!/bin/bash -l
+#SBATCH --job-name=merge-bams
+#SBATCH --nodes=1
+#SBATCH --mem=40G
+#SBATCH --ntasks-per-node=16
+#SBATCH --time=48:00:00
+#SBATCH --mail-type=FAIL
+
+#sbatch -a 0-4 --export INPUTLIST="list.txt" merge-bams.sh
+
+module load conda
+if [ -s "$INPUTLIST" ]
+then
+    SAMPLES=( $(cut -f 1 $INPUTLIST) );
+
+    if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
+    then
+        i=$SLURM_ARRAY_TASK_ID
+
+        LIST=($(cut -f 1 samples.txt))
+        #module load hisat2
+        #hisat2-build ${SAMPLES[i]}.fasta ${SAMPLES[i]}_genome
+        #for f in ${LIST[@]};do hisat2 --max-intronlen 3000 --dta --no-unal -x ${SAMPLES[i]}_genome -1 ${f}_R1_paired.fastq.gz -2 ${f}_R2_paired.fastq.gz -S ${SAMPLES[i]}_${f}_this.sam;done
+        module load samtools
+        samtools merge -o ${SAMPLES[i]}_5DPI_merged.bam ${SAMPLES[i]}_Painter82_5DPI_1_sorted_masked.bam ${SAMPLES[i]}_Painter82_5DPI_2_sorted_masked.bam ${SAMPLES[i]}_Painter82_5DPI_3_sorted_masked.bam
+        samtools merge -o ${SAMPLES[i]}_7DPI_merged.bam ${SAMPLES[i]}_Painter82_7DPI_1_sorted_masked.bam ${SAMPLES[i]}_Painter82_7DPI_2_sorted_masked.bam ${SAMPLES[i]}_Painter82_7DPI_3_sorted_masked.bam
+        samtools merge -o ${SAMPLES[i]}_spores_merged.bam ${SAMPLES[i]}_Painter82_spores_1_sorted_masked.bam ${SAMPLES[i]}_Painter82_spores_2_sorted_masked.bam ${SAMPLES[i]}_Painter82_spores_3_sorted_masked.bam
+        samtools merge -o ${SAMPLES[i]}_infection_merged.bam ${SAMPLES[i]}_5DPI_merged.bam ${SAMPLES[i]}_7DPI_merged.bam
+        samtools merge -o ${SAMPLES[i]}_transcripts_merged.bam ${SAMPLES[i]}_infection_merged.bam ${SAMPLES[i]}_spores_merged.bam
+        #samtools sort
+        for f in ${LIST[@]};do samtools view -b ${SAMPLES[i]}_${f}_this.sam | samtools sort - -o ${SAMPLES[i]}_${f}_sorted_this.bam;done
+        #use stringtie and merge these........per sample
+        #merge replicates
+        module load stringtie
+        stringtie --merge -o ${SAMPLES[i]}.gtf -m50 -M1 ${SAMPLES[i]}_1_sorted.bam ${SAMPLES[i]}_2_sorted.bam ${SAMPLES[i]}_3_sorted.bam
+    else
+        echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
+    fi
+else
+    echo "Error: Missing inputs file list as --export env INPUTLIST or file empty"
+fi
+
+```
+
+#5. Use Trinity to performe genome-guided assembly of transcripts - run using singularity image
+
+```{trinity assembler, eval=FALSE}
+#trinity singularity image - load this and run
+#SBATCH --time=72:00:00
+#SBATCH --job-name=assemble-trinity-singularity
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=32
+#SBATCH --mem=100GB
+
+#use merged alignment files (from samtools merge) as input for Trinity
+
+#to submit: sbatch -a 0-9 --export INPUTLIST="isolates.txt" trinity-assemble-sing.sh
+
+if [ -s "$INPUTLIST" ]
+then
+    SAMPLES=( $(cut -f 1 $INPUTLIST) );
+
+    if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
+    then
+        i=$SLURM_ARRAY_TASK_ID
+        module load singularity
+        export PATH=$PATH:/scratch.global/spann057/barley_leaf_rust/pangenome/gene-annotation/bowtie
+        singularity exec -e trinityrnaseq.v2.15.1.simg Trinity --genome_guided_bam ${SAMPLES[i]}_transcripts_merged.bam --max_memory 100G --genome_guided_max_intron 3000 --CPU 6 --jaccard_clip --output ${SAMPLES[i]}_Trinity_singularity
+    else
+        echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
+    fi
+else
+    echo "Error: Missing inputs file list as --export env INPUTLIST or file empty"
+fi
+
+```
+
+#6. Use Stringtie for transcriptome assembly and merge transcripts, then run CodingQuarry on separate spore and infection transcripts (and use to extract ORFs later)
+```{stringtie, eval=FALSE}
+#!/bin/bash -l
+#SBATCH --job-name=align-rnaseq-ph
+#SBATCH --nodes=1
+#SBATCH --mem=40G
+#SBATCH --ntasks-per-node=16
+#SBATCH --time=48:00:00
+#SBATCH --mail-type=FAIL
+
+#sbatch -a 0-39 --export INPUTLIST="refs.txt" stringtie-codingquarry.sh
+
+module load conda
+if [ -s "$INPUTLIST" ]
+then
+    SAMPLES=( $(cut -f 1 $INPUTLIST) );
+
+    if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
+    then
+        i=$SLURM_ARRAY_TASK_ID
+        #use stringtie and merge these........per sample
+        #merge replicates
+        module load stringtie
+        stringtie -s1 -m50 ${SAMPLES[i]}_spores_merged.bam -o ${SAMPLES[i]}_spores
+        stringtie -s1 -m50 ${SAMPLES[i]}_5DPI_merged.bam -o ${SAMPLES[i]}_5DPI
+        stringtie -s1 -m50 ${SAMPLES[i]}_7DPI_merged.bam -o ${SAMPLES[i]}_7DPI
+        ls ${SAMPLES[i]}_assembly_softannotate_spores.gtf ${SAMPLES[i]}_hap0_chrs_softmasked_spores.gtf ${SAMPLES[i]}_hap1_chrs_softmasked_spores.gtf ${SAMPLES[i]}_unplaced_all_softmasked_spores.gtf > ${SAMPLES[i]}_spores.list
+        ls ${SAMPLES[i]}_assembly_softannotate_7DPI.gtf ${SAMPLES[i]}_hap0_chrs_softmasked_7DPI.gtf ${SAMPLES[i]}_hap1_chrs_softmasked_7DPI.gtf ${SAMPLES[i]}_unplaced_all_softmasked_7DPI.gtf >> ${SAMPLES[i]}.list
+        stringtie --merge -o ${SAMPLES[i]}_allspores.gtf ${SAMPLES[i]}_spores.list
+        stringtie --merge -o ${SAMPLES[i]}_allinfection.gtf -G ${SAMPLES[i]}
+    else
+        echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
+    fi
+else
+    echo "Error: Missing inputs file list as --export env INPUTLIST or file empty"
+fi
+
+
+```
+
+#7. Use CodingQuarry - Hidden Markov Model gene prediction with reference genome and transcript annotation file made after RNAseq alignment (e.g. Stringtie output- convert to gff3)
+```{CodingQuarry get gene models for use in Funannotate gene prediction, use othergff input}
+##could run CodingQuarry using a singularity image
+#singularity pull shub://TomHarrop/funannotate-singularity:funannotate_1.7.4
+#!/bin/bash -l
+#SBATCH --job-name=infect-codingquarry
+#SBATCH --nodes=1
+#SBATCH --mem=80G
+#SBATCH --tmp=80G
+#SBATCH --ntasks-per-node=32
+#SBATCH --time=72:00:00
+#SBATCH --mail-type=FAIL
+
+#sbatch -a 0-9 --export INPUTLIST="refs.txt" coding-quarry-infection.sh
+if [ -s "$INPUTLIST" ]
+then
+    SAMPLES=( $(cut -f 1 $INPUTLIST) );
+
+    if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
+    then
+        i=$SLURM_ARRAY_TASK_ID
+        module load singularity
+        cd /scratch.global/spann057/barley_leaf_rust/pangenome/funannotate_prediction/${SAMPLES[i]}_infection/
+        singularity exec /scratch.global/spann057/barley_leaf_rust/pangenome/funannotate_prediction/funannotate-singularity_funannotate_1.7.4.sif CodingQuarry -f ${SAMPLES[i]}_fullassembly.fasta -t ${SAMPLES[i]}_allinfection.gff3
+        #/scratch.global/spann057/barley_leaf_rust/pangenome/gene-annotation/CodingQuarry_v2.0/CodingQuarry -f 15ca06c_fullassembly.fasta -t 15ca06c_allinfection.gff3
+    else
+        echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
+    fi
+else
+    echo "Error: Missing inputs file list as --export env INPUTLIST or file empty"
+fi
+#did the same for spore transcripts
+#!/bin/bash -l
+#SBATCH --job-name=spores-codingquarry
+#SBATCH --nodes=1
+#SBATCH --mem=80G
+#SBATCH --tmp=80G
+#SBATCH --ntasks-per-node=32
+#SBATCH --time=72:00:00
+#SBATCH --mail-type=FAIL
+
+#sbatch -a 0-9 --export INPUTLIST="refs.txt" coding-quarry-infection.sh
+if [ -s "$INPUTLIST" ]
+then
+    SAMPLES=( $(cut -f 1 $INPUTLIST) );
+
+    if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
+    then
+        i=$SLURM_ARRAY_TASK_ID
+        module load singularity
+        cd /scratch.global/spann057/barley_leaf_rust/pangenome/funannotate_prediction/${SAMPLES[i]}_spores/
+        singularity exec /scratch.global/spann057/barley_leaf_rust/pangenome/funannotate_prediction/funannotate-singularity_funannotate_1.7.4.sif CodingQuarry -f ${SAMPLES[i]}_fullassembly.fasta -t ${SAMPLES[i]}_allspores.gff3
+        #/scratch.global/spann057/barley_leaf_rust/pangenome/gene-annotation/CodingQuarry_v2.0/CodingQuarry -f 15ca06c_fullassembly.fasta -t 15ca06c_allinfection.gff3
+    else
+        echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
+    fi
+else
+    echo "Error: Missing inputs file list as --export env INPUTLIST or file empty"
+fi
+#for spore transcripts, merge predicted and dubious into one set
+#!/bin/bash -l
+#SBATCH --job-name=spores-codingquarry
+#SBATCH --nodes=1
+#SBATCH --mem=80G
+#SBATCH --tmp=80G
+#SBATCH --ntasks-per-node=32
+#SBATCH --time=72:00:00
+#SBATCH --mail-type=FAIL
+
+#sbatch -a 0-9 --export INPUTLIST="refs.txt" coding-quarry-infection.sh
+if [ -s "$INPUTLIST" ]
+then
+    SAMPLES=( $(cut -f 1 $INPUTLIST) );
+
+    if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
+    then
+        i=$SLURM_ARRAY_TASK_ID
+        #singularity image agat
+        #singularity exec /home/steffenb/spann057/envs/agat/agat_1.0.0--pl5321hdfd78af_0.sif 
+        singularity exec /home/steffenb/spann057/envs/agat/agat_1.0.0--pl5321hdfd78af_0.sif agat_sp_merge_annotations.pl --gff /scratch.global/spann057/barley_leaf_rust/pangenome/funannotate_prediction/${SAMPLES[i]}_spores/out/PredictedPass.gff3 --gff /scratch.global/spann057/barley_leaf_rust/pangenome/funannotate_prediction/${SAMPLES[i]}_spores/out/DubiousSet.gff3 --out /scratch.global/spann057/barley_leaf_rust/pangenome/funannotate_prediction/${SAMPLES[i]}_codingquarry_spores.gff3
+        cp /scratch.global/spann057/barley_leaf_rust/pangenome/funannotate_prediction/${SAMPLES[i]}_infection/out/PredictedPass.gff3 ${SAMPLES[i]}_codingquarry_infection.gff3
+        
+    else
+        echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
+    fi
+else
+    echo "Error: Missing inputs file list as --export env INPUTLIST or file empty"
+fi
+
+```
+
+#7. Run Funannotate 
+```{funannotate}
+#perform training on funannotate data
+#!/bin/bash -l
+#SBATCH --job-name=codingquarry-bam
+#SBATCH --nodes=1
+#SBATCH --mem=50G
+#SBATCH --ntasks-per-node=16
+#SBATCH --time=24:00:00
+#SBATCH --mail-type=FAIL
+
+#sbatch -a 0-9 --export INPUTLIST="isolates.txt" funannotate-train-rocky8.sh
+
+source /etc/profile # Include this line for software module availability
+module load compatibility/mesabi-centos7
+compat-exec module load funannotate
+
+LIST_OF_SAMPLES="isolates.txt"
+READS="$(sed "${SLURM_ARRAY_TASK_ID}q;d" ${LIST_OF_SAMPLES})"
+#compat-exec module load funannotate
+#singularity exec /scratch.global/spann057/barley_leaf_rust/pangenome/funannotate_prediction/funannotate-singularity_funannotate_1.7.4.sif
+singularity exec funannotate-singularity_funannotate_1.7.4.sif funannotate train -i ${READS}_fullassembly_softmasked_deduped.fasta -o ${READS}_funannotate_train --left *R1_paired.fastq.gz --right *R2_paired.fastq.gz --trinity ${READS}_trinity_transcripts.fasta --jaccard_clip --no_trimmomatic
+
+#copy pasa annotation file into current folder
+cp ${READS}_funannotate+train/training/funannotate_train_pasa.gff3 ${READS}_pasa.gff3
+
+#use all evidence to run gene prediction
+#inclues Trinity transcripts, pasa gene annotation from funannotate training, pucciniomycotina EST clusters from JGI MycoCosm, include CodingQuarry infection and spore transcripts as othergffs with respective weights - higher weight for infection transcripts versus spores to get more accurate prediction of effectors (small secreted proteins) 
+singularity exec funannotate-singularity_funannotate_1.7.4.sif funannotate predict -i ${READS}_fullassembly_softmasked_deduped.fasta -o ${READS}_funannotate_predict --species ustilago --busco_seed_species ustilago --pasa_gff ${READS}_pasa_deduped.gff3 --ploidy 2 --optimize_augustus --transcript_evidence pucciniomycotina_ESTs.fasta --other_gff ${READS}_codingquarry_infection.gff3:20 --other_gff ${READS}_codingquarry_spores.gff3:2 --weights pasa:10 codingquarry:0
+
+#copy gene annotation file into current folder
+#cp ${READS}_funannotate_codingquarry-predict/path/to/*gff3 ${READS}_funannotate.gff3
+
+#run funannotate update to update gene models
+#use funannotate folder (prediction) as input. using rnaseq
+singularity exec funannotate-singularity_funannotate_1.7.4.sif funannotate update -i ${READS}_funannotate_predict --left *R1_paired.fastq.gz --right *R2_paired.fastq.gz --jaccard_clip --no_trimmomatic
+
+```
+
+#8. Predicting extra putative small secreted proteins (effectors) and adding to gene annotation
+```{extract ORFs}
+#first get transcripts from gff3 (annotation file)
+#!/bin/bash -l
+#SBATCH --job-name=gffread
+#SBATCH --nodes=1
+#SBATCH --mem=40G
+#SBATCH --tmp=40G
+#SBATCH --ntasks-per-node=32
+#SBATCH --time=72:00:00
+#SBATCH --mail-type=FAIL
+
+#sbatch -a 0-9 --export INPUTLIST="refs.txt" coding-quarry-infection.sh
+#first get transcripts from infection annotation- use gffread
+if [ -s "$INPUTLIST" ]
+then
+    SAMPLES=( $(cut -f 1 $INPUTLIST) );
+
+    if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
+    then
+        i=$SLURM_ARRAY_TASK_ID
+        module load conda
+        source activate gffread
+        gffread -w ${SAMPLES[i]}_transcripts.fasta -g ${SAMPLES[i]}_fullassembly_softmasked_deduped.fasta ${SAMPLES[i]}_allinfection.gtf
+    else
+        echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
+    fi
+else
+    echo "Error: Missing inputs file list as --export env INPUTLIST or file empty"
+fi
+
+#run ORF predictiong
+#use transcoder to get long ORFs from StringTie gene annotation
+#!/bin/bash -l
+#SBATCH --job-name=spores-codingquarry
+#SBATCH --nodes=1
+#SBATCH --mem=80G
+#SBATCH --tmp=80G
+#SBATCH --ntasks-per-node=32
+#SBATCH --time=72:00:00
+#SBATCH --mail-type=FAIL
+
+#sbatch -a 0-9 --export INPUTLIST="refs.txt" coding-quarry-infection.sh
+if [ -s "$INPUTLIST" ]
+then
+    SAMPLES=( $(cut -f 1 $INPUTLIST) );
+
+    if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
+    then
+        i=$SLURM_ARRAY_TASK_ID
+        module load transdecoder
+        TransDecoder.LongOrfs -m50 ${SAMPLES[i]}.fasta > ${SAMPLES[i]}_longorfs.fasta 
+        TransDecoder.Predict –single_best_only ${SAMPLES[i]}_longorfs.fasta > ${SAMPLES[i]}_bestorfs.fasta
+    else
+        echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
+    fi
+else
+    echo "Error: Missing inputs file list as --export env INPUTLIST or file empty"
+fi
+#filter for complete ORFs that have start and stop codon, and with secretion signal, and without transmembrane domain
+#run SignalP, and look for TM
+#[writing own script here to parse data --- will work on this later-gene annotation etc.]
+#signalP
+#run ORF predictiong
+#use transcoder to get long ORFs from StringTie gene annotation
+#!/bin/bash -l
+#SBATCH --job-name=spores-codingquarry
+#SBATCH --nodes=1
+#SBATCH --mem=80G
+#SBATCH --tmp=80G
+#SBATCH --ntasks-per-node=32
+#SBATCH --time=72:00:00
+#SBATCH --mail-type=FAIL
+
+#sbatch -a 0-9 --export INPUTLIST="refs.txt" coding-quarry-infection.sh
+if [ -s "$INPUTLIST" ]
+then
+    SAMPLES=( $(cut -f 1 $INPUTLIST) );
+
+    if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
+    signalp -u 0.34 -U 0.34 ${SAMPLES[i]}_infection_transcripts.fasta.transdecoder.cds
+    else
+        echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
+    fi
+else
+    echo "Error: Missing inputs file list as --export env INPUTLIST or file empty"
+fi
+#find gene ids with signal peptide predicted
+grep "Y" ${SAMPLES[i]}_signalP_protein_predictions.txt
+#Phobius
+module load phobius
+module load perl
+phobius.pl ${SAMPLES[i]}_proteins.fasta > ${SAMPLES[i]}_phobius.txt
+#deeptmhmm better but don't have this on command line
+cat ${SAMPLES[i]}_proteins.fasta | tmhmm > ${SAMPLES[i]}_TM.txt
+#TMHMM
+#filter entries - with stop and start codon... with signalP, without TM.
+for f in *protein_predictions.txt;do grep "Y" $f > ${f}_signalP.txt;done
+for f in *TM.txt;do grep "Number of predicted TMHs:  0" $f > ${f}_noTM.txt;done
+rename "TM.txt_noTM.txt" "noTM.txt" *
+for f in *signalP.txt;do sed 's/ .*//' $f > ${f}_ids.txt;done
+for f in *noTM.txt;do sed 's/ .*//' $f > ${f}_ids.txt;done
+rename "_signalP.txt_ids" "_signalP_ids" *ids.txt
+rename "_noTM.txt_ids" "_noTM_ids" *ids.txt
+#combine IDS
+ls *_signalP.txt | sed -i -e 's/_signalP//' > isolates.txt
+LIST=($(cut -f1 isolates.txt))
+for f in ${LIST[@]};do cat ${f}_signalP_ids.txt ${f}_noTM_ids.txt > ${f}_allids.txt;done
+for f in ${LIST[@]};do sort ${f}_allids.txt | uniq -c > ${f}_counts.txt;done
+for f in ${LIST[@]};do 
+
+#add extra predicted small secreted protein genes to final gene annotation file, but cannot include effector genes >90% contained in repetitive region (as in funannotate)
+#check based on repeat region annotation .gff
+module load agat
+singularity exec /home/steffenb/spann057/envs/agat/agat_1.0.0--pl5321hdfd78af_0.sif agat_convert_sp_gxf2gxf.pl --gff -o 
+module load perl
+#merge gff3 files...
+#ransdecoder--add CDS feature
+
+#fix overlapping genes
+agat_sp_fix_overlaping_genes.pl
+
+####
+#extract individual haplotypes/unplaced etc 
+awk 'substr($1, length($1)) == "l" {print $0}' 
+
+####extract CDS and translate to protein sequence
+module load cufflinks
+gffread *gff3 -g _diploid.fasta -x CDS.fasta
+module load emboss
+transeq - CDS.fasta protein.fasta
