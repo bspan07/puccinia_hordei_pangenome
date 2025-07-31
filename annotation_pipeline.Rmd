@@ -95,7 +95,7 @@ ls *fasta > files.txt
 #includes diploid, haploid, unplaced
 
 #to submit: sbatch -a 0-39 --export INPUTLIST="files.txt" repeatmasker.sh
-module load repeatmodeler
+module load repeatmodeler/2.0.1
 module load repeatmasker/4.1.1
 
 if [ -s "$INPUTLIST" ]
@@ -105,8 +105,6 @@ then
     if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
     then
         i=$SLURM_ARRAY_TASK_ID
-        module load repeatmodeler/4.1.1
-        module load repeatmasker
         BuildDatabase -name ${SAMPLES[i]}_db ${SAMPLES[i]}
         RepeatModeler -database ${SAMPLES[i]}_db -LTRStruct
         #RepeatMasker -s -nolow -small -lib ${SAMPLES[i]}_db-families.fa -dir ${SAMPLES[i]}_repeatmasker_softmasked ${SAMPLES[i]}
@@ -124,7 +122,7 @@ else
 fi
 ```
 
-#3. Align raw reads to diploid, haploid and unplaced chromosomes
+#3. Align raw reads to genome
 
 ```{bash hisat2, eval=FALSE}
 #load hisat2 aligner to align illumina paired end reads to assemblies
@@ -479,8 +477,10 @@ then
     then
         i=$SLURM_ARRAY_TASK_ID
         module load transdecoder
-        TransDecoder.LongOrfs -m50 ${SAMPLES[i]}.fasta > ${SAMPLES[i]}_longorfs.fasta 
-        TransDecoder.Predict –single_best_only ${SAMPLES[i]}_longorfs.fasta > ${SAMPLES[i]}_bestorfs.fasta
+        util/gtf_to_alignment_gff3.pl ${SAMPLES[i]}_allinfection.gtf > ${SAMPLES[i]}_allinfection.gff3
+        TransDecoder.LongOrfs -m50 -t ${SAMPLES[i]}_transcripts.fasta 
+        TransDecoder.Predict –single_best_only -t ${SAMPLES[i]}_transcripts.fasta
+        util/cdna_alignment_orf_to_genome_orf.pl ${SAMPLES[i]}_transcripts.fasta.transdecoder.gff3 ${SAMPLES[i]}_allinfection.gff3 ${SAMPLES[i]}_transcripts.fasta > ${SAMPLES[i]}_transcripts.fasta.transdecoder.genome.gff3
     else
         echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
     fi
@@ -508,7 +508,7 @@ then
     SAMPLES=( $(cut -f 1 $INPUTLIST) );
 
     if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
-    signalp -u 0.34 -U 0.34 ${SAMPLES[i]}_infection_transcripts.fasta.transdecoder.cds
+    signalp -u 0.34 -U 0.34 ${SAMPLES[i]}_infection_transcripts.fasta.transdecoder.pep
     else
         echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
     fi
@@ -519,8 +519,8 @@ fi
 grep "Y" ${SAMPLES[i]}_signalP_protein_predictions.txt
 #Phobius
 module load phobius
-module load perl
-phobius.pl ${SAMPLES[i]}_proteins.fasta > ${SAMPLES[i]}_phobius.txt
+#module load perl
+#phobius.pl ${SAMPLES[i]}_proteins.fasta > ${SAMPLES[i]}_phobius.txt
 #deeptmhmm better but don't have this on command line
 cat ${SAMPLES[i]}_proteins.fasta | tmhmm > ${SAMPLES[i]}_TM.txt
 #TMHMM
@@ -537,10 +537,10 @@ ls *_signalP.txt | sed -i -e 's/_signalP//' > isolates.txt
 LIST=($(cut -f1 isolates.txt))
 for f in ${LIST[@]};do cat ${f}_signalP_ids.txt ${f}_noTM_ids.txt > ${f}_allids.txt;done
 for f in ${LIST[@]};do sort ${f}_allids.txt | uniq -c > ${f}_counts.txt;done
-for f in ${LIST[@]};do 
+for f in ${LIST[@]};do grep -f ${f}_allids.txt ${f}_transcripts.fasta.transdecoder.genome.gff3 > ${f}_secreted.gff3
 
-#add extra predicted small secreted protein genes to final gene annotation file, but cannot include effector genes >90% contained in repetitive region (as in funannotate)
-#check based on repeat region annotation .gff
+
+#add extra predicted small secreted protein genes to final gene annotation file
 module load agat
 singularity exec /home/steffenb/spann057/envs/agat/agat_1.0.0--pl5321hdfd78af_0.sif agat_convert_sp_gxf2gxf.pl --gff -o 
 module load perl
@@ -550,12 +550,4 @@ module load perl
 #fix overlapping genes
 agat_sp_fix_overlaping_genes.pl
 
-####
-#extract individual haplotypes/unplaced etc 
-awk 'substr($1, length($1)) == "l" {print $0}' 
-
-####extract CDS and translate to protein sequence
-module load cufflinks
-gffread *gff3 -g _diploid.fasta -x CDS.fasta
-module load emboss
-transeq - CDS.fasta protein.fasta
+###450bp... convert
