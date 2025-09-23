@@ -109,8 +109,6 @@ then
         RepeatModeler -database ${SAMPLES[i]}_db -LTRStruct
         RepeatMasker -s -nolow -xsmall -lib ${SAMPLES[i]}_db-families.fa -dir ${SAMPLES[i]}_repeatmasker_softmasked ${SAMPLES[i]}
         #mv ${SAMPLES[i]}_repeatmasker_softmasked/${SAMPLES[i]}.masked ${SAMPLES[i]}_softmasked.fasta
-        module load bbmap
-        dedupe.sh in=${SAMPLES[i]}_softmasked.fasta out=${SAMPLES[i]}_softmasked_deduped.fasta
     else
         echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
     fi
@@ -126,7 +124,7 @@ fi
 ##make sure in same folder as the masked assemblies *masked.fasta
 
 #make list of reference genomes to align to
-ls *softmasked_deduped.fasta > refs.txt
+ls *softmasked.fasta > refs.txt
 
 #make list of read identifiers
 ls *paired.fastq.gz | sed 's/_R1_paired.fastq.gz//' | sed 's/_R2_paired.fastq.gz//' | sort -u > reads.txt
@@ -370,8 +368,9 @@ then
     then
         i=$SLURM_ARRAY_TASK_ID
         module load funannotate
-        funannotate train -i ${SAMPLES[i]}_softmasked_deduped.fasta -o ${SAMPLES[i]}_train --left ${SAMPLES[i]}_R1.fastq.gz --right ${SAMPLES[i]}_R2.fastq.gz --trinity ${SAMPLES[i]}_trinity.fasta --jaccard_clip --no_trimmomatic
-        funannotate predict -i ${SAMPLES[i]}_softmasked_deduped.fasta -o ${SAMPLES[i]}_train --species ustilago --busco_seed_species ustilago --ploidy 2 --optimize_augustus --other_gff ${SAMPLES[i]}_codingquarry_infection.gff3:20 ${SAMPLES[i]}_codingquarry_spores.gff3:2 --weights pasa:10 codingquarry:0 --transcript_evidence pucciniomycotina_ESTs.fasta
+        funannotate train -i ${SAMPLES[i]}_softmasked.fasta -o ${SAMPLES[i]}_train --left ${SAMPLES[i]}_R1.fastq.gz --right ${SAMPLES[i]}_R2.fastq.gz --trinity ${SAMPLES[i]}_trinity.fasta --jaccard_clip --no_trimmomatic
+        funannotate predict -i ${SAMPLES[i]}_softmasked.fasta -o ${SAMPLES[i]}_train --species ustilago --busco_seed_species ustilago --ploidy 2 --optimize_augustus --other_gff ${SAMPLES[i]}_codingquarry_infection.gff3:20 ${SAMPLES[i]}_codingquarry_spores.gff3:2 --weights pasa:10 codingquarry:0 --transcript_evidence pucciniomycotina_ESTs.fasta
+        funannotate update -i ${SAMPLES[i]}_train
     else
         echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
     fi
@@ -404,7 +403,7 @@ then
         i=$SLURM_ARRAY_TASK_ID
         module load conda
         source activate gffread
-        gffread -w ${SAMPLES[i]}_transcripts.fasta -g ${SAMPLES[i]}_softmasked_deduped.fasta ${SAMPLES[i]}_infection.gtf
+        gffread -w ${SAMPLES[i]}_transcripts.fasta -g ${SAMPLES[i]}_softmasked.fasta ${SAMPLES[i]}_infection.gtf
     else
         echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
     fi
