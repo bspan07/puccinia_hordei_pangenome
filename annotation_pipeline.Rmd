@@ -107,7 +107,9 @@ then
         i=$SLURM_ARRAY_TASK_ID
         BuildDatabase -name ${SAMPLES[i]}_db ${SAMPLES[i]}
         RepeatModeler -database ${SAMPLES[i]}_db -LTRStruct
-        RepeatMasker -s -nolow -xsmall -lib ${SAMPLES[i]}_db-families.fa -dir ${SAMPLES[i]}_repeatmasker_softmasked ${SAMPLES[i]}
+        #remove unknown repeats in library - as recommended by Jana Sperschneider
+        seqkit grep -v --by-name --use-regexp --ignore-case --pattern '#Unknown' ${SAMPLES[i]}_db-families.fa > ${SAMPLES[i]}_classified-families.fa
+        RepeatMasker -s -nolow -gff -xsmall -e ncbi -lib ${SAMPLES[i]}_classified-families.fa -dir ${SAMPLES[i]}_repeatmasker_softmasked ${SAMPLES[i]}
         #mv ${SAMPLES[i]}_repeatmasker_softmasked/${SAMPLES[i]}.masked ${SAMPLES[i]}_softmasked.fasta
     else
         echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
