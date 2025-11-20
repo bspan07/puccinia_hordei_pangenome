@@ -22,6 +22,6 @@ Bespoke code was used to make elements of the following Figures:
 `figure6_orthogroups.R` : histogram....
 
 # Figure S8
-karyoplot for gene density
+`figure8_karyoplot.Rmd` : plot gene density along chromosomes using `KaryoploteR`.
 
 
