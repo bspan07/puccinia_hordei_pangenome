@@ -10,7 +10,9 @@ Bespoke code was used to make elements of the following Figures:
 `figure1_chromatin_contact.R` : plots a bar chart with mean±SE for chromatin contact to constituent nucleus or other nucleus for phased chromosomes 1-18, using the `chromatin_contact.txt` file as input.
 
 **Figure 3**
-in `Figure3.Rmd`: synteny between chromosomes using `syri` and `plotsR`; violin plots of chromosome lengths.
+`figure3_synteny.Rmd`: makes a synteny plot between chromosomes of all twenty nuclear-phased barley leaf rust haplotypes using `syri` and `plotsR`. Haplotype-phased genomes can be found at https://doi.org/10.6084/m9.figshare.30623441.
+
+`figure3_chr_length.R` : creates violin plots of chromosome lengths.
 
 **Figure 5**
 
