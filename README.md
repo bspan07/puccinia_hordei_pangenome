@@ -1,5 +1,5 @@
 # Overview
-Scripts used to complete the *Puccinia hordei* genome data visualization in Spanner *et al.* (2025): [DOI](https://doi.org/10.64898/2026.01.30.702850).
+Scripts used to complete the *Puccinia hordei* genome data visualization in Spanner *et al.* (2025), Haplotype-phased genomes of the barley leaf rust pathogen reveal evidence of repeat element expansion and somatic hybridization: [DOI](https://doi.org/10.64898/2026.01.30.702850).
 
 # Data visualization
 Bespoke code or undescribed methods were used to make elements of the following Figures:
