@@ -27,6 +27,6 @@ Bespoke code or undescribed methods were used to make elements of the following 
 `figure6_orthogroups.R` : plots a histogram of orthogroups shared between different numbers of nuclear haplotypes. 
 
 # Figure S8
-`figure8_karyoplot.Rmd` : plot gene density along chromosomes using `KaryoploteR`.
+`figure8_karyoplot.R` : plot gene density along chromosomes using `KaryoploteR`.
 
 
