@@ -1,14 +1,14 @@
-genomes	orthogroups
-1	174
-2	2140
-3	1393
-4	1132
-5	923
-6	879
-7	840
-8	759
-9	818
-10	897
-11	1154
-12	1680
-13	7092
+genomes	orthogroups	type
+1	174	unique
+2	2140	cloud
+3	1393	cloud
+4	1132	shell
+5	923	shell
+6	879	shell
+7	840	shell
+8	759	shell
+9	818	shell
+10	897	shell
+11	1154	softcore
+12	1680	softcore
+13	7092	core
