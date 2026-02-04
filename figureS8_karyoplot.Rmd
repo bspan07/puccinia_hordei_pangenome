@@ -1,0 +1,34 @@
+####based on instructions from karyoploteR: https://bernatgel.github.io/karyoploter_tutorial//Examples/PlotGenes/PlotGenes.html
+and adapted from: https://github.com/TC-Hewitt/OatCrownRust
+##prepare a regions table from genome with total chromosome lengths
+module load samtools
+samtools faidx mygenome.fasta
+printf "chr\tstart\tend\n" > mygenome.granges.txt
+TAB='\t'
+cut -f1,2 mygenome.fasta.fai | sed "s/${TAB}/${TAB}0${TAB}/g" >> mygenome.granges.txt
+##prepare regions of interest to be plotted along the chromosomes, called loci.granges.txt. Can be converted from gff3.
+##consists of chr, start, end, name, colour
+awk -F'\t' 'BEGIN{OFS="\t"}
+  $0 !~ /^#/ && $3=="gene" {
+    id=".";
+    if (match($9, /ID=[^;]+/)) { id=substr($9, RSTART+3, RLENGTH-3) }
+    print $1, $4, $5, id, "#2C7BB6"
+  }' genes.gff3 > loci.granges.txt
+
+#####This part is in R
+library(karyoplotR)
+library(svglite)
+
+mygenome <- toGRanges("mygenome.granges.txt")
+loci <- toGRanges("loci.granges.txt")
+hapFG <- c("chr1F", "chr1G", "chr2F", "chr2G", "chr3F", "chr3G", "chr4F", "chr4G", "chr5F", "chr5G", "chr6F", "chr6G", "chr7F", "chr7G", "chr8F", "chr8G", "chr9F", "chr9G", "chr10F", "chr10G", "chr11F", "chr11G", "chr12F", "chr12G", "chr13F", "chr13G", "chr14F", "chr14G", "chr15F", "chr15G", "chr16F", "chr16G", "chr17F", "chr17G", "chr18F", "chr18G")
+svglite("chrsB.svg", width=8, height=6)
+
+kp_hapFG <- plotKaryotype(genome=mygenome, chromosomes=hapFG)
+kpPlotRegions(
+    kp_hapFG, loci, 
+    data.panel="ideogram", 
+    r0=NULL, r1=NULL, 
+    col=loci$colour, 
+    border='#000000', 
+    avoid.overlapping = FALSE)
