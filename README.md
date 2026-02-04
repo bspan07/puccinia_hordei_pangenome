@@ -1,5 +1,5 @@
 # Overview
-Scripts used to complete the *Puccinia hordei* genome data visualization in Spanner *et al.* (2025): DOI.
+Scripts used to complete the *Puccinia hordei* genome data visualization in Spanner *et al.* (2025): [DOI](https://doi.org/10.64898/2026.01.30.702850).
 
 # Data visualization
 Bespoke code or undescribed methods were used to make elements of the following Figures:
