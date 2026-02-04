@@ -22,9 +22,9 @@ Bespoke code or undescribed methods were used to make elements of the following 
 `figure5_stackedbar.R` : creates a stacked bar chart that shows the size of each type of repeat (Mbp) in each genome.
 
 # Figure 6
-`figure6_pangenome_saturation.Rmd` : pangenome saturation curve.... 
+`figure6_pangenome_saturation.Rmd` : plots a pangenome saturation curve alongside cumulative "core" and "unique" orthogroups with increasing number of muclear haplotypes.
 
-`figure6_orthogroups.R` : histogram....
+`figure6_orthogroups.R` : plots a histogram of orthogroups shared between different numbers of nuclear haplotypes. 
 
 # Figure S8
 `figure8_karyoplot.Rmd` : plot gene density along chromosomes using `KaryoploteR`.
