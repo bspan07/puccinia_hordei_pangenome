@@ -2,7 +2,7 @@
 Scripts used to complete the *Puccinia hordei* genome data visualization in Spanner *et al.* (2025): DOI.
 
 # Data visualization
-Bespoke code was used to make elements of the following Figures:
+Bespoke code or undescribed methods were used to make elements of the following Figures:
 
 # Figure 1
 `figure1_phenotype.R` : creates an .eps file of a heat map of barley leaf rust isolate virulence profiles across Bowman differential lines, using the `phenotype.txt` file as input.
