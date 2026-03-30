@@ -1,0 +1,357 @@
+---
+  title: "Gene annotation pipeline"
+author: "Rebecca Spanner"
+date: "`r format(Sys.time(), '%m.%d.%Y')`"
+output:
+  rmdformats::readthedown:
+  code_folding: hide
+self_contained: true
+number_sections: false
+highlight: pygments
+---
+  
+  ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+<style type="text/css"> body { font-size: 14px; } td { font-size: 8px; } h1 { font-size: 28px; color: DarkBlue; } h2 { font-size: 20px; color: DarkBlue; } h3 { font-size: 16px; color: DarkBlue; } code.r, pre { font-size: 12px; } </style>
+  1. Trim raw Illumina RNA-seq reads
+#!/bin/bash -l
+#SBATCH --job-name=trim_rnaseq
+#SBATCH --nodes=1
+#SBATCH --ntasks=16
+#SBATCH --mem=40G
+#SBATCH --time=24:00:00
+#SBATCH --mail-type=END,FAIL
+
+module load java/21.0.2
+
+INPUTLIST="${INPUTLIST:-isolates.txt}"
+TRIMMOMATIC_JAR="/path/to/trimmomatic.jar"
+ADAPTERS="/path/to/TruSeq3-PE.fa"
+
+mapfile -t SAMPLES < "$INPUTLIST"
+SAMPLE="${SAMPLES[$SLURM_ARRAY_TASK_ID]}"
+
+java -jar "$TRIMMOMATIC_JAR" PE -threads 16 -phred33 \
+"${SAMPLE}_1.fastq.gz" "${SAMPLE}_2.fastq.gz" \
+"${SAMPLE}_R1_paired.fastq.gz" "${SAMPLE}_R1_unpaired.fastq.gz" \
+"${SAMPLE}_R2_paired.fastq.gz" "${SAMPLE}_R2_unpaired.fastq.gz" \
+ILLUMINACLIP:${ADAPTERS}:2:30:10 \
+LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36
+
+Example list creation:
+  
+  ls *diploidassembly.fasta | sed 's/_diploidassembly.fasta//' > isolates.txt
+
+# sbatch --array=0-9 --export=INPUTLIST=isolates.txt 01_trim.sh
+
+2. Repeat annotation and soft-masking
+#!/bin/bash -l
+#SBATCH --job-name=repeatmask
+#SBATCH --nodes=1
+#SBATCH --ntasks=16
+#SBATCH --mem=40G
+#SBATCH --time=48:00:00
+
+module load repeatmodeler
+module load repeatmasker/4.1.1
+module load funannotate
+
+INPUTLIST="${INPUTLIST:-files.txt}"
+mapfile -t REFS < "$INPUTLIST"
+REF="${REFS[$SLURM_ARRAY_TASK_ID]}"
+BASE="${REF%.*}"
+
+BuildDatabase -name "${BASE}_db" "$REF"
+RepeatModeler -database "${BASE}_db" -threads 16 -LTRStruct
+funannotate mask -i "$REF" -o "${BASE}_softmasked.fasta" -l "${BASE}_db-families.fa"
+ls *.fasta > files.txt
+
+# sbatch --array=0-39 --export=INPUTLIST=files.txt 02_repeatmask.sh
+
+3. Align trimmed RNA-seq reads to soft-masked assemblies
+#!/bin/bash -l
+#SBATCH --job-name=align_rnaseq
+#SBATCH --nodes=1
+#SBATCH --ntasks=16
+#SBATCH --mem=40G
+#SBATCH --time=48:00:00
+
+module load hisat2
+module load samtools
+
+INPUTLIST="${INPUTLIST:-refs.txt}"
+READLIST="${READLIST:-reads.txt}"
+
+mapfile -t REFS < "$INPUTLIST"
+REF="${REFS[$SLURM_ARRAY_TASK_ID]}"
+BASE="${REF%.*}"
+
+hisat2-build "$REF" "${BASE}_idx"
+
+while read -r SAMPLE; do
+hisat2 --max-intronlen 3000 --dta --no-unal -p 16 \
+-x "${BASE}_idx" \
+-1 "${SAMPLE}_R1_paired.fastq.gz" \
+-2 "${SAMPLE}_R2_paired.fastq.gz" \
+-S "${BASE}_${SAMPLE}.sam"
+
+samtools view -@ 16 -b "${BASE}_${SAMPLE}.sam" | \
+samtools sort -@ 16 -o "${BASE}_${SAMPLE}_sorted.bam"
+
+samtools index "${BASE}_${SAMPLE}_sorted.bam"
+rm -f "${BASE}_${SAMPLE}.sam"
+done < "$READLIST"
+ls *_softmasked.fasta > refs.txt
+ls *_R1_paired.fastq.gz | sed 's/_R1_paired.fastq.gz//' > reads.txt
+
+# sbatch --array=0-3 --export=INPUTLIST=refs.txt,READLIST=reads.txt 03_align.sh
+
+4. Merge BAMs and assemble transcripts with StringTie
+#!/bin/bash -l
+#SBATCH --job-name=merge_stringtie
+#SBATCH --nodes=1
+#SBATCH --ntasks=8
+#SBATCH --mem=40G
+#SBATCH --time=24:00:00
+#SBATCH --mail-type=FAIL
+
+module load samtools
+module load stringtie
+
+INPUTLIST="${INPUTLIST:-refs.txt}"
+mapfile -t REFS < "$INPUTLIST"
+REF="${REFS[$SLURM_ARRAY_TASK_ID]}"
+BASE="${REF%.*}"
+
+samtools merge -@ 8 -o "${BASE}_5DPI_merged.bam" \
+"${BASE}_Painter82_5DPI_1_sorted.bam" \
+"${BASE}_Painter82_5DPI_2_sorted.bam" \
+"${BASE}_Painter82_5DPI_3_sorted.bam"
+
+samtools merge -@ 8 -o "${BASE}_7DPI_merged.bam" \
+"${BASE}_Painter82_7DPI_1_sorted.bam" \
+"${BASE}_Painter82_7DPI_2_sorted.bam" \
+"${BASE}_Painter82_7DPI_3_sorted.bam"
+
+samtools merge -@ 8 -o "${BASE}_spores_merged.bam" \
+"${BASE}_Painter82_spores_1_sorted.bam" \
+"${BASE}_Painter82_spores_2_sorted.bam" \
+"${BASE}_Painter82_spores_3_sorted.bam"
+
+samtools merge -@ 8 -o "${BASE}_infection_merged.bam" \
+"${BASE}_5DPI_merged.bam" "${BASE}_7DPI_merged.bam"
+
+samtools merge -@ 8 -o "${BASE}_transcripts_merged.bam" \
+"${BASE}_infection_merged.bam" "${BASE}_spores_merged.bam"
+
+stringtie -p 8 -m 50 -o "${BASE}_spores.gtf" "${BASE}_spores_merged.bam"
+stringtie -p 8 -m 50 -o "${BASE}_5DPI.gtf" "${BASE}_5DPI_merged.bam"
+stringtie -p 8 -m 50 -o "${BASE}_7DPI.gtf" "${BASE}_7DPI_merged.bam"
+
+printf "%s\n" "${BASE}_spores.gtf" > "${BASE}_spores.list"
+printf "%s\n" "${BASE}_5DPI.gtf" "${BASE}_7DPI.gtf" > "${BASE}_infection.list"
+
+stringtie --merge -p 8 -o "${BASE}_allspores.gtf" "${BASE}_spores.list"
+stringtie --merge -p 8 -o "${BASE}_allinfection.gtf" "${BASE}_infection.list"
+
+5. Trinity genome-guided transcript assembly
+#!/bin/bash -l
+#SBATCH --job-name=trinity_gg
+#SBATCH --nodes=1
+#SBATCH --ntasks=16
+#SBATCH --mem=100G
+#SBATCH --time=72:00:00
+#SBATCH --mail-type=FAIL
+
+module load trinity
+
+INPUTLIST="${INPUTLIST:-isolates.txt}"
+mapfile -t SAMPLES < "$INPUTLIST"
+SAMPLE="${SAMPLES[$SLURM_ARRAY_TASK_ID]}"
+
+Trinity \
+--genome_guided_bam "${SAMPLE}_transcripts_merged.bam" \
+--max_memory 100G \
+--genome_guided_max_intron 3000 \
+--CPU 16 \
+--jaccard_clip \
+--output "${SAMPLE}_trinity_gg"
+
+6. Convert merged StringTie GTF files to GFF3
+#!/bin/bash -l
+#SBATCH --job-name=gtf_to_gff3
+#SBATCH --nodes=1
+#SBATCH --ntasks=4
+#SBATCH --mem=16G
+#SBATCH --time=08:00:00
+
+module load agat
+
+INPUTLIST="${INPUTLIST:-refs.txt}"
+mapfile -t REFS < "$INPUTLIST"
+REF="${REFS[$SLURM_ARRAY_TASK_ID]}"
+BASE="${REF%.*}"
+
+agat_convert_sp_gxf2gxf.pl -g "${BASE}_allspores.gtf" -o "${BASE}_allspores.gff3"
+agat_convert_sp_gxf2gxf.pl -g "${BASE}_allinfection.gtf" -o "${BASE}_allinfection.gff3"
+
+7. Run CodingQuarry on infection and spore transcript evidence
+#!/bin/bash -l
+#SBATCH --job-name=codingquarry
+#SBATCH --nodes=1
+#SBATCH --ntasks=16
+#SBATCH --mem=80G
+#SBATCH --tmp=80G
+#SBATCH --time=72:00:00
+#SBATCH --mail-type=FAIL
+
+module load codingquarry
+module load agat
+
+INPUTLIST="${INPUTLIST:-refs.txt}"
+WORKDIR="${WORKDIR:-$PWD}"
+
+mapfile -t REFS < "$INPUTLIST"
+REF="${REFS[$SLURM_ARRAY_TASK_ID]}"
+BASE="${REF%.*}"
+
+mkdir -p "${WORKDIR}/${BASE}_infection" "${WORKDIR}/${BASE}_spores"
+
+cd "${WORKDIR}/${BASE}_infection"
+CodingQuarry -f "${WORKDIR}/${REF}" -t "${WORKDIR}/${BASE}_allinfection.gff3"
+
+cd "${WORKDIR}/${BASE}_spores"
+CodingQuarry -f "${WORKDIR}/${REF}" -t "${WORKDIR}/${BASE}_allspores.gff3"
+
+agat_sp_merge_annotations.pl \
+--gff "${WORKDIR}/${BASE}_spores/out/PredictedPass.gff3" \
+--gff "${WORKDIR}/${BASE}_spores/out/DubiousSet.gff3" \
+-o "${WORKDIR}/${BASE}_codingquarry_spores.gff3"
+
+cp "${WORKDIR}/${BASE}_infection/out/PredictedPass.gff3" \
+"${WORKDIR}/${BASE}_codingquarry_infection.gff3"
+
+8. Run Funannotate train, predict, and update
+#!/bin/bash -l
+#SBATCH --job-name=funannotate
+#SBATCH --nodes=1
+#SBATCH --ntasks=16
+#SBATCH --mem=50G
+#SBATCH --time=48:00:00
+#SBATCH --mail-type=FAIL
+
+module load funannotate
+
+INPUTLIST="${INPUTLIST:-isolates.txt}"
+mapfile -t SAMPLES < "$INPUTLIST"
+SAMPLE="${SAMPLES[$SLURM_ARRAY_TASK_ID]}"
+
+GENOME="${SAMPLE}_fullassembly_softmasked.fasta"
+LEFT="*R1_paired.fastq.gz"
+RIGHT="*R2_paired.fastq.gz"
+TRINITY="${SAMPLE}_trinity_gg/Trinity-GG.fasta"
+ESTS="pucciniomycotina_ESTs.fasta"
+
+funannotate train \
+-i "$GENOME" \
+-o "${SAMPLE}_funannotate_train" \
+--left $LEFT \
+--right $RIGHT \
+--trinity "$TRINITY" \
+--jaccard_clip \
+--no_trimmomatic
+
+cp "${SAMPLE}_funannotate_train/training/funannotate_train.pasa.gff3" \
+"${SAMPLE}_pasa.gff3"
+
+funannotate predict \
+-i "$GENOME" \
+-o "${SAMPLE}_funannotate_predict" \
+--species "Ustilago maydis" \
+--busco_seed_species ustilago \
+--pasa_gff "${SAMPLE}_pasa.gff3" \
+--ploidy 2 \
+--optimize_augustus \
+--transcript_evidence "$ESTS" \
+--other_gff "${SAMPLE}_codingquarry_infection.gff3" \
+--other_gff "${SAMPLE}_codingquarry_spores.gff3" \
+--weights pasa:10,codingquarry:20
+
+funannotate update \
+-i "${SAMPLE}_funannotate_predict" \
+--left $LEFT \
+--right $RIGHT \
+--jaccard_clip \
+--no_trimmomatic
+
+9. Extract transcript sequences and predict ORFs
+#!/bin/bash -l
+#SBATCH --job-name=extract_orfs
+#SBATCH --nodes=1
+#SBATCH --ntasks=16
+#SBATCH --mem=80G
+#SBATCH --tmp=80G
+#SBATCH --time=48:00:00
+#SBATCH --mail-type=FAIL
+
+module load gffread
+module load transdecoder
+
+INPUTLIST="${INPUTLIST:-refs.txt}"
+mapfile -t REFS < "$INPUTLIST"
+REF="${REFS[$SLURM_ARRAY_TASK_ID]}"
+BASE="${REF%.*}"
+
+gffread \
+-w "${BASE}_infection_transcripts.fasta" \
+-g "$REF" \
+"${BASE}_allinfection.gtf"
+
+TransDecoder.LongOrfs -t "${BASE}_infection_transcripts.fasta" -m 50
+TransDecoder.Predict --single_best_only -t "${BASE}_infection_transcripts.fasta"
+
+10. Signal peptide and transmembrane filtering
+#!/bin/bash -l
+#SBATCH --job-name=secretome_filter
+#SBATCH --nodes=1
+#SBATCH --ntasks=8
+#SBATCH --mem=40G
+#SBATCH --time=24:00:00
+#SBATCH --mail-type=FAIL
+
+module load signalp
+module load phobius
+module load tmhmm
+
+INPUTLIST="${INPUTLIST:-refs.txt}"
+mapfile -t REFS < "$INPUTLIST"
+REF="${REFS[$SLURM_ARRAY_TASK_ID]}"
+BASE="${REF%.*}"
+
+PEP="${BASE}_infection_transcripts.fasta.transdecoder.pep"
+
+signalp -f short -n "${BASE}_signalp.txt" "$PEP"
+phobius.pl "$PEP" > "${BASE}_phobius.txt"
+tmhmm "$PEP" > "${BASE}_tmhmm.txt"
+
+grep "Y" "${BASE}_signalp.txt" | awk '{print $1}' > "${BASE}_signalp_ids.txt"
+grep "Number of predicted TMHs:  0" "${BASE}_tmhmm.txt" | awk '{print $1}' > "${BASE}_noTM_ids.txt"
+
+cat "${BASE}_signalp_ids.txt" "${BASE}_noTM_ids.txt" | sort | uniq -d > "${BASE}_secreted_ids.txt"
+
+11. Comparative genomics and orthology
+#!/bin/bash -l
+#SBATCH --job-name=comparative_genomics
+#SBATCH --nodes=1
+#SBATCH --ntasks=16
+#SBATCH --mem=50G
+#SBATCH --time=24:00:00
+#SBATCH --mail-type=FAIL
+
+module load funannotate
+module load orthofinder
+
+ls *_funannotate_predict > input_folders.txt
+
+funannotate compare -i input_folders.txt -o funannotate_compare --run_dnds --go_fdr --proteinortho
+orthofinder -f proteome_directory
