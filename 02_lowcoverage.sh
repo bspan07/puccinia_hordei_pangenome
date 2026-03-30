@@ -5,6 +5,8 @@
 #SBATCH --mem=20G
 #SBATCH --time=12:00:00
 
+##submit as: sbatch --array=0-9 02_lowcoverage.sh isolates.txt
+
 module load minimap2/2.30
 module load bbmap/39.01
 
