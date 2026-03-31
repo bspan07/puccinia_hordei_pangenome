@@ -6,7 +6,7 @@
 #SBATCH --time=2:00:00
 
 ##submit as: sbatch 04_prep_contigs.sh isolates.txt
-
+###This is to separate assembly into its constituent contigs which in the next script are aligned to the NCBI nucleotide database to look for contaminants.
 OUTDIR="/output/path"
 ISOLATES="$1"
 
