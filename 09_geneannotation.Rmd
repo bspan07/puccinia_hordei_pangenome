@@ -60,10 +60,17 @@ INPUTLIST="${INPUTLIST:-files.txt}"
 mapfile -t REFS < "$INPUTLIST"
 REF="${REFS[$SLURM_ARRAY_TASK_ID]}"
 BASE="${REF%.*}"
+GENOME="genome.fasta"
 
 BuildDatabase -name "${BASE}_db" "$REF"
 RepeatModeler -database "${BASE}_db" -threads 16 -LTRStruct
-funannotate mask -i "$REF" -o "${BASE}_softmasked.fasta" -l "${BASE}_db-families.fa"
+###IMPORTANT - tip from Jana Sperschneider, only  mask with known repeats
+module load seqkit
+seqkit grep -v --by-name --use-regexp --ignore-case --pattern '#Unknown' ${BASE}_db-families.fa > ${BASE}_db-families.classified.fa
+
+# Do not mask simple repeats or unknown repeats for gene annotation
+RepeatMasker -nolow -s -gff -lib ${BASE}_db-families.classified.fa -dir ${BASE}_softmasked -xsmall -pa ${GENOME} -engine ncbi
+
 ls *.fasta > files.txt
 
 # sbatch --array=0-39 --export=INPUTLIST=files.txt 02_repeatmask.sh
