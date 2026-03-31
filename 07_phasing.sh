@@ -70,7 +70,9 @@ cd "$OUTDIR"
 
 # 2. Convert HiC-Pro matrix
 
-module load hicexplorer
+##module load hicexplorer
+module load conda
+source activate hicexplorer
 
 hicConvertFormat \
   --matrices "${HICPRO_RUN}/${HICPRO_RUN}/hic_results/matrix/rawdata/iced/20000/rawdata_20000_iced.matrix" \
