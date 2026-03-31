@@ -5,7 +5,10 @@
 #SBATCH --mem=80G
 #SBATCH --time=8:00:00
 
-module load hifiasm/0.24.0
+#module load hifiasm/0.24.0
+#in my case I use a conda environment for hifiasm
+module load conda
+source activate hifiasm
 module load bbmap/39.01
 
 OUTDIR="/output/path"
