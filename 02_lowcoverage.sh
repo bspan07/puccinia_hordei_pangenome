@@ -25,5 +25,4 @@ pileup.sh in="${SAMPLE}.sam" out="${SAMPLE}_pileup.txt"
 
 awk -v x="$LOWCOV" '$2 <= x {print $1}' "${SAMPLE}_pileup.txt" > "${SAMPLE}_low_cov.txt"
 
-awk 'FNR==NR {bad[$1]; next} /^>/ {keep=!(substr($1,2) in bad)} keep' \
-    "${SAMPLE}_low_cov.txt" "${SAMPLE}_combined.fasta" > "${SAMPLE}_lowcov_removed.fa"
+awk 'FNR==NR {bad[$1]; next} /^>/ {keep=!(substr($1,2) in bad)} keep' "${SAMPLE}_low_cov.txt" "${SAMPLE}_combined.fasta" > "${SAMPLE}_lowcov_removed.fa"
