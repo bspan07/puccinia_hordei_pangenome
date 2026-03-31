@@ -14,7 +14,9 @@ module load bwa/0.7.17
 module load picard/2.26.10
 module load bowtie/1.3.1
 module load salsa/2.3
-module load hicexplorer
+#module load hicexplorer
+module load conda
+source activate hicexplorer
 module load hic-pro/3.1.0
 module load python/3.7.2
 
