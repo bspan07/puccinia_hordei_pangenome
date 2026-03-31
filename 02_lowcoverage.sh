@@ -5,19 +5,17 @@
 #SBATCH --mem=20G
 #SBATCH --time=12:00:00
 
-##submit as: sbatch --array=0-9 02_lowcoverage.sh isolates.txt
+##NB: since the coverage threshold needs to be defined per isolate, this cannot be run as an array.
 
 module load minimap2/2.30
 module load bbmap/39.01
 
 OUTDIR="/output/path"
-ISOLATES="$1"          # isolates.txt
+SAMPLE="isolate_name"
+####LOWCOV value should be modified depending on coverage distribution of isolate
 LOWCOV=5
 
 cd "$OUTDIR"
-
-mapfile -t SAMPLES < <(cut -f1 "$ISOLATES")
-SAMPLE="${SAMPLES[$SLURM_ARRAY_TASK_ID]}"
 
 cat "${SAMPLE}.asm.hic.hap1.p_ctg.fa" "${SAMPLE}.asm.hic.hap2.p_ctg.fa" > "${SAMPLE}_combined.fasta"
 
