@@ -28,25 +28,17 @@ SAMPLE="${SAMPLES[$SLURM_ARRAY_TASK_ID]}"
 
 blastn -query "${SAMPLE}_lowcov_removed.fa" -db MITO -dust yes -perc_identity 90 \
     -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore" |
-awk '($3>=98 && $4>=50) || ($3>=94 && $4>=100) || ($3>=90 && $4>=200)' \
-    > "${MITODIR}/${SAMPLE}_MITO_CONTIGS.txt"
+awk '($3>=98 && $4>=50) || ($3>=94 && $4>=100) || ($3>=90 && $4>=200)' > "${MITODIR}/${SAMPLE}_MITO_CONTIGS.txt"
 
-cut -f1 "${MITODIR}/${SAMPLE}_MITO_CONTIGS.txt" | sort | uniq -c | awk '{print $2"\t"$1}' \
-    > "${MITODIR}/${SAMPLE}_mito_counts.txt"
+cut -f1 "${MITODIR}/${SAMPLE}_MITO_CONTIGS.txt" | sort | uniq -c | awk '{print $2"\t"$1}' > "${MITODIR}/${SAMPLE}_mito_counts.txt"
 
-awk '
-    /^>/ {name=substr($1,2); getline; print name"\t"length($0)}
-' "${SAMPLE}_lowcov_removed.fa" > "${MITODIR}/${SAMPLE}_contig_lengths.txt"
+awk '/^>/ {name=substr($1,2); getline; print name"\t"length($0)}' "${SAMPLE}_lowcov_removed.fa" > "${MITODIR}/${SAMPLE}_contig_lengths.txt"
 
-awk '
-    NR==FNR {len[$1]=$2; next}
+awk 'NR==FNR {len[$1]=$2; next}
     $1 in len {
         dens=$2/len[$1]
         if (dens > 0.0004) print $1
-    }
-' "${MITODIR}/${SAMPLE}_contig_lengths.txt" "${MITODIR}/${SAMPLE}_mito_counts.txt" \
-    > "${MITODIR}/${SAMPLE}_mito_contamination.txt"
+    }' "${MITODIR}/${SAMPLE}_contig_lengths.txt" "${MITODIR}/${SAMPLE}_mito_counts.txt" > "${MITODIR}/${SAMPLE}_mito_contamination.txt"
 
 ##remove mitochondrial contigs
-awk 'FNR==NR {bad[$1]; next} /^>/ {keep=!(substr($1,2) in bad)} keep' \
-    "${MITODIR}/${SAMPLE}_mito_contamination.txt" "${SAMPLE}_lowcov_removed.fa" > "${SAMPLE}_no_mito.fa"
+awk 'FNR==NR {bad[$1]; next} /^>/ {keep=!(substr($1,2) in bad)} keep' "${MITODIR}/${SAMPLE}_mito_contamination.txt" "${SAMPLE}_lowcov_removed.fa" > "${SAMPLE}_no_mito.fa"
