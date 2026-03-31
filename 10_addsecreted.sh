@@ -1,5 +1,5 @@
 #!/bin/bash -l
-#SBATCH --job-name=addsecreted
+#SBATCH --job-name=add_secreted
 #SBATCH --nodes=1
 #SBATCH --mem=30G
 #SBATCH --tmp=10G
