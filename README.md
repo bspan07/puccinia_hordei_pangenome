@@ -5,7 +5,7 @@ Scripts used to complete the *Puccinia hordei* genome assemblies, annotation and
 Scripts 01-08 contain all commands used to perform initial hifiasm assembly, remove low coverage contigs, remove mitochondrial contigs, remove "contaminant" contigs, confirm accurate phasing and perform manual scaffolding of chromosomes.
 
 # Gene annotation
-09_geneannotation.Rmd details all steps performed in gene annotation.
+09_geneannotation.Rmd details all steps performed in gene annotation. 10_addsecreted.sh was used to add additional secreted genes obtained from RNAseq data (StringTie transcripts).
 
 # Data visualization
 Bespoke code or undescribed methods were used to make elements of the following Figures:
