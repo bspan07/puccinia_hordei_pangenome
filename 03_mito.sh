@@ -5,9 +5,9 @@
 #SBATCH --mem=20G
 #SBATCH --time=10:00:00
 
-##submit as: sbatch --array=0-9 03_mito.sh isolates.txt
+##for multiple isolates, submit as: sbatch --array=0-9 03_mito.sh isolates.txt
 
-module load ncbi_toolkit/2.12.0
+module load ncbi_toolkit/25.2.0
 
 OUTDIR="/output/path"
 ISOLATES="$1"               # isolates.txt
@@ -23,6 +23,8 @@ fi
 
 mapfile -t SAMPLES < <(cut -f1 "$ISOLATES")
 SAMPLE="${SAMPLES[$SLURM_ARRAY_TASK_ID]}"
+
+###identify which contigs are from mitochondrial genome
 
 blastn -query "${SAMPLE}_lowcov_removed.fa" -db MITO -dust yes -perc_identity 90 \
     -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore" |
@@ -45,5 +47,6 @@ awk '
 ' "${MITODIR}/${SAMPLE}_contig_lengths.txt" "${MITODIR}/${SAMPLE}_mito_counts.txt" \
     > "${MITODIR}/${SAMPLE}_mito_contamination.txt"
 
+##remove mitochondrial contigs
 awk 'FNR==NR {bad[$1]; next} /^>/ {keep=!(substr($1,2) in bad)} keep' \
     "${MITODIR}/${SAMPLE}_mito_contamination.txt" "${SAMPLE}_lowcov_removed.fa" > "${SAMPLE}_no_mito.fa"
